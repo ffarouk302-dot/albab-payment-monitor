@@ -15,6 +15,12 @@ Supabase `payment-monitor` function. The monitor shares backend data and
 contracts with the delivery system, but it does not share the delivery app
 entry point, Android flavor, source tree, or build output.
 
+The deployable Edge Function source is kept under
+`backend/supabase/functions/payment-monitor/`. Deploy it only from this
+repository when a backend change is explicitly approved. No delivery APK,
+AAB, build directory, signing key, `local.properties`, or private environment
+file belongs in this repository.
+
 ## Build
 
 Run from this repository root:

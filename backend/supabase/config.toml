@@ -1,0 +1,2 @@
+[functions.payment-monitor]
+verify_jwt = false
