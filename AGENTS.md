@@ -59,6 +59,23 @@ monitor tests, and the package/version/payload checks above.
   required by that Edge Function.
 - `test/features/payment_monitor/`: parser and history summary tests.
 
+## Device approval lifecycle
+
+- A new installation signs in with the existing monitor account password and
+  sends a random installation `deviceId` to the `payment-monitor` function.
+- The function creates `paymentMonitorDevices/{deviceId}` with status
+  `pending`. It must not activate SMS monitoring or process payments while the
+  device is pending, rejected, or revoked.
+- The delivery app administrator reviews the request from its dedicated admin
+  page. Valid states are `pending`, `approved`, `rejected`, and `revoked`.
+- After approval, the monitor calls `activateDevice`. The server makes that
+  device active and revokes the previous active device for this account.
+- The server remains the authority for device access and all payment decisions.
+  Never auto-approve a new installation or trust a local device flag alone.
+- The device record contains operational metadata such as model, Android
+  version, app version, request time, and last seen time. It contains no
+  payment secret or service-account credential.
+
 ## Backend and financial boundaries
 
 The monitor uses the existing `albab-delivery` Firebase project and the

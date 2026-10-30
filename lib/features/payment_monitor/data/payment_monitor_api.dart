@@ -13,6 +13,39 @@ enum PaymentMonitorDecision {
   ignored,
 }
 
+enum PaymentMonitorDeviceAccess {
+  pending,
+  approved,
+  rejected,
+  revoked;
+
+  static PaymentMonitorDeviceAccess fromName(String? value) =>
+      PaymentMonitorDeviceAccess.values.firstWhere(
+        (PaymentMonitorDeviceAccess access) => access.name == value,
+        orElse: () => PaymentMonitorDeviceAccess.pending,
+      );
+}
+
+class PaymentMonitorDeviceAccessResponse {
+  const PaymentMonitorDeviceAccessResponse({
+    required this.access,
+    required this.message,
+  });
+
+  final PaymentMonitorDeviceAccess access;
+  final String message;
+
+  bool get isApproved => access == PaymentMonitorDeviceAccess.approved;
+
+  factory PaymentMonitorDeviceAccessResponse.fromJson(
+    Map<String, dynamic> json,
+  ) =>
+      PaymentMonitorDeviceAccessResponse(
+        access: PaymentMonitorDeviceAccess.fromName(json['access'] as String?),
+        message: json['message'] as String? ?? 'تم استلام طلب الجهاز.',
+      );
+}
+
 class PaymentMonitorResponse {
   const PaymentMonitorResponse({
     required this.decision,
@@ -28,9 +61,10 @@ class PaymentMonitorResponse {
 }
 
 class PaymentMonitorApiException implements Exception {
-  const PaymentMonitorApiException(this.message);
+  const PaymentMonitorApiException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -47,12 +81,42 @@ class PaymentMonitorApi {
   final firebase_auth.FirebaseAuth _auth;
   final http.Client _client;
 
-  Future<void> registerDevice({
+  Future<PaymentMonitorDeviceAccessResponse> requestDevice({
+    required String deviceId,
+    required String walletNumber,
+    String deviceName = '',
+    String androidVersion = '',
+    String appVersion = '',
+  }) async {
+    final Map<String, dynamic> body = await _call(<String, dynamic>{
+      'action': 'requestDevice',
+      'deviceId': deviceId,
+      'walletNumber': walletNumber,
+      'deviceName': deviceName,
+      'androidVersion': androidVersion,
+      'appVersion': appVersion,
+    });
+    return PaymentMonitorDeviceAccessResponse.fromJson(body);
+  }
+
+  Future<PaymentMonitorDeviceAccessResponse> checkDevice({
+    required String deviceId,
+    required String walletNumber,
+  }) async {
+    final Map<String, dynamic> body = await _call(<String, dynamic>{
+      'action': 'checkDevice',
+      'deviceId': deviceId,
+      'walletNumber': walletNumber,
+    });
+    return PaymentMonitorDeviceAccessResponse.fromJson(body);
+  }
+
+  Future<void> activateDevice({
     required String deviceId,
     required String walletNumber,
   }) async {
     await _call(<String, dynamic>{
-      'action': 'registerDevice',
+      'action': 'activateDevice',
       'deviceId': deviceId,
       'walletNumber': walletNumber,
     });
@@ -131,6 +195,7 @@ class PaymentMonitorApi {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw PaymentMonitorApiException(
         decoded['message'] as String? ?? 'تعذر الاتصال بخدمة مراقبة الدفع.',
+        statusCode: response.statusCode,
       );
     }
     return decoded;

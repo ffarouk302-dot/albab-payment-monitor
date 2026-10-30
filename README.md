@@ -22,6 +22,12 @@ this repository when a backend change is explicitly approved. No delivery
 APK, AAB, build directory, signing key, `local.properties`, or private
 environment file belongs in this repository.
 
+New installations use the same monitor account password, then wait for an
+administrator to approve the device from the delivery app's **مراقب الدفع**
+page. The monitor does not activate SMS processing until the server reports
+the device as approved. Approving a replacement device revokes the previous
+active device for this account.
+
 ## Build
 
 Run from this repository root:

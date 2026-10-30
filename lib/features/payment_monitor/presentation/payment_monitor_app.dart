@@ -86,6 +86,8 @@ class PaymentMonitorGate extends StatelessWidget {
               isLoading: state.authStatus == PaymentMonitorAuthStatus.signingIn,
               errorMessage: state.errorMessage,
             ),
+          PaymentMonitorAuthStatus.awaitingApproval =>
+            _MonitorApprovalPending(state: state),
           PaymentMonitorAuthStatus.signedIn => const _MonitorDashboard(),
         };
       },
@@ -109,6 +111,82 @@ class _MonitorSplash extends StatelessWidget {
             SizedBox(height: 16),
             Text('جارٍ تجهيز مراقبة الدفع...'),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MonitorApprovalPending extends StatelessWidget {
+  const _MonitorApprovalPending({required this.state});
+
+  final PaymentMonitorState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final PaymentMonitorCubit cubit = context.read<PaymentMonitorCubit>();
+    final bool rejected =
+        state.deviceAccess == PaymentMonitorDeviceAccess.rejected;
+    final bool revoked =
+        state.deviceAccess == PaymentMonitorDeviceAccess.revoked;
+    final Color color =
+        rejected || revoked ? const Color(0xFFB42318) : const Color(0xFF0F766E);
+    final String title = rejected
+        ? 'تم رفض الجهاز'
+        : revoked
+            ? 'تم إلغاء ربط الجهاز'
+            : 'الجهاز في انتظار موافقة الأدمن';
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const _MonitorLogo(size: 92),
+                  const SizedBox(height: 24),
+                  Icon(
+                    rejected || revoked
+                        ? Icons.gpp_bad_outlined
+                        : Icons.hourglass_top_rounded,
+                    size: 54,
+                    color: color,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF102A43),
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    state.approvalMessage ??
+                        'تم إرسال طلب ربط الجهاز إلى حساب الأدمن.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 22),
+                  FilledButton.icon(
+                    onPressed: cubit.refreshDeviceAccess,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('تحديث حالة الموافقة'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: cubit.signOut,
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text('تسجيل الخروج'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

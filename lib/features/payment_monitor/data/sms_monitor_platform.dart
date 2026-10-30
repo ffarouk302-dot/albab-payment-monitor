@@ -57,6 +57,16 @@ class SmsMonitorPlatform {
   Future<void> requestReceiveSmsPermission() =>
       _channel.invokeMethod<void>('requestSmsPermission');
 
+  Future<Map<String, String>> deviceInfo() async {
+    final Map<dynamic, dynamic> raw =
+        await _channel.invokeMethod<Map<dynamic, dynamic>>('deviceInfo') ??
+            const <dynamic, dynamic>{};
+    return raw.map(
+      (dynamic key, dynamic value) =>
+          MapEntry(key.toString(), value.toString()),
+    );
+  }
+
   Future<void> clearPendingMessages() =>
       _channel.invokeMethod<void>('clearPendingSms');
 

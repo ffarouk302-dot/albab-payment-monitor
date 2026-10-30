@@ -236,11 +236,36 @@ async function authenticatedMonitor(request: Request) {
   return { identity };
 }
 
-async function ensureDevice(
+type DeviceAccess = 'pending' | 'approved' | 'rejected' | 'revoked';
+
+function deviceAccessMessage(access: DeviceAccess): string {
+  switch (access) {
+    case 'approved':
+      return 'تمت الموافقة على الجهاز.';
+    case 'rejected':
+      return 'تم رفض طلب ربط الجهاز من مسؤول النظام.';
+    case 'revoked':
+      return 'تم إلغاء ربط هذا الجهاز من مسؤول النظام.';
+    default:
+      return 'تم إرسال طلب ربط الجهاز إلى مسؤول النظام. انتظر الموافقة قبل بدء المراقبة.';
+  }
+}
+
+function boundedText(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+async function resolveDeviceAccess(
   uid: string,
   deviceId: string,
   walletNumber: string,
-): Promise<Response | null> {
+  options: {
+    createPending: boolean;
+    deviceName?: string;
+    androidVersion?: string;
+    appVersion?: string;
+  },
+): Promise<{ access: DeviceAccess; message: string } | Response> {
   if (!deviceId || deviceId.length > 128) {
     return jsonResponse({ message: 'معرّف الجهاز غير صالح.' }, 400);
   }
@@ -248,22 +273,77 @@ async function ensureDevice(
     return jsonResponse({ message: 'رقم المحفظة غير مطابق لإعدادات المراقبة.' }, 400);
   }
 
-  const path = `paymentMonitors/${uid}`;
-  const current = await readFirestoreDocument(path);
-  if (current == null) {
-    const now = new Date().toISOString();
-    await writeFirestoreDocument(path, {
-      uid: stringValue(uid),
-      role: stringValue('paymentVerifier'),
-      walletNumber: stringValue(WALLET_NUMBER),
-      deviceId: stringValue(deviceId),
-      enabled: boolValue(true),
-      createdAt: stringValue(now),
-      lastSeenAt: stringValue(now),
-    });
-    return null;
+  const devicePath = `paymentMonitorDevices/${deviceId}`;
+  const registeredDevice = await readFirestoreDocument(devicePath);
+  if (registeredDevice != null) {
+    const registeredFields = documentFields(registeredDevice);
+    const access = stringField(registeredFields, 'status') as DeviceAccess | null;
+    if (access === 'approved' || access === 'rejected' || access === 'revoked') {
+      return { access, message: deviceAccessMessage(access) };
+    }
+    return { access: 'pending', message: deviceAccessMessage('pending') };
   }
 
+  const current = await readFirestoreDocument(`paymentMonitors/${uid}`);
+  const currentFields = current == null ? null : documentFields(current);
+  if (
+    currentFields != null &&
+    stringField(currentFields, 'deviceId') === deviceId &&
+    boolFieldOrDefault(currentFields, 'enabled', true) === true
+  ) {
+    const now = new Date().toISOString();
+    await writeFirestoreDocument(devicePath, {
+      uid: stringValue(uid),
+      deviceId: stringValue(deviceId),
+      status: stringValue('approved'),
+      deviceName: stringValue(options.deviceName ?? ''),
+      androidVersion: stringValue(options.androidVersion ?? ''),
+      appVersion: stringValue(options.appVersion ?? ''),
+      createdAt: stringValue(stringField(currentFields, 'createdAt') ?? now),
+      lastSeenAt: stringValue(now),
+      updatedAt: stringValue(now),
+      approvedAt: stringValue(now),
+      approvedBy: stringValue('legacy-device'),
+    });
+    return { access: 'approved', message: deviceAccessMessage('approved') };
+  }
+
+  if (!options.createPending) {
+    return { access: 'pending', message: deviceAccessMessage('pending') };
+  }
+
+  const now = new Date().toISOString();
+  await writeFirestoreDocument(devicePath, {
+    uid: stringValue(uid),
+    deviceId: stringValue(deviceId),
+    status: stringValue('pending'),
+    deviceName: stringValue(options.deviceName ?? ''),
+    androidVersion: stringValue(options.androidVersion ?? ''),
+    appVersion: stringValue(options.appVersion ?? ''),
+    createdAt: stringValue(now),
+    lastSeenAt: stringValue(now),
+    updatedAt: stringValue(now),
+  });
+  return { access: 'pending', message: deviceAccessMessage('pending') };
+}
+
+async function ensureDevice(
+  uid: string,
+  deviceId: string,
+  walletNumber: string,
+): Promise<Response | null> {
+  const access = await resolveDeviceAccess(uid, deviceId, walletNumber, {
+    createPending: false,
+  });
+  if (access instanceof Response) return access;
+  if (access.access !== 'approved') {
+    return jsonResponse({ message: access.message }, 403);
+  }
+
+  const current = await readFirestoreDocument(`paymentMonitors/${uid}`);
+  if (current == null) {
+    return jsonResponse({ message: 'لم يتم تفعيل الجهاز بعد.' }, 403);
+  }
   const fields = documentFields(current);
   if (stringField(fields, 'role') !== 'paymentVerifier' ||
       boolFieldOrDefault(fields, 'enabled', true) !== true) {
@@ -271,10 +351,86 @@ async function ensureDevice(
   }
   if (stringField(fields, 'deviceId') !== deviceId) {
     return jsonResponse({
-      message: 'هذا الحساب مرتبط بجهاز آخر. اطلب إعادة ربط الجهاز من مسؤول النظام.',
+      message: 'تم اعتماد جهاز آخر لهذا الحساب. اطلب تفعيل هذا الجهاز من مسؤول النظام.',
     }, 409);
   }
   return null;
+}
+
+async function activateDevice(
+  uid: string,
+  deviceId: string,
+  walletNumber: string,
+): Promise<Response> {
+  if (normalizePhone(walletNumber) !== WALLET_NUMBER) {
+    return jsonResponse({ message: 'رقم المحفظة غير مطابق لإعدادات المراقبة.' }, 400);
+  }
+  const devicePath = `paymentMonitorDevices/${deviceId}`;
+  const device = await readFirestoreDocument(devicePath);
+  if (device == null) {
+    return jsonResponse({ message: 'لم يتم العثور على طلب الجهاز.' }, 404);
+  }
+  const deviceFields = documentFields(device);
+  if (stringField(deviceFields, 'status') !== 'approved') {
+    return jsonResponse({
+      message: deviceAccessMessage(
+        (stringField(deviceFields, 'status') as DeviceAccess | null) ?? 'pending',
+      ),
+    }, 409);
+  }
+
+  const now = new Date().toISOString();
+  const monitorPath = `paymentMonitors/${uid}`;
+  const current = await readFirestoreDocument(monitorPath);
+  if (current != null) {
+    const currentFields = documentFields(current);
+    const previousDeviceId = stringField(currentFields, 'deviceId');
+    if (previousDeviceId != null && previousDeviceId !== deviceId) {
+      const previousPath = `paymentMonitorDevices/${previousDeviceId}`;
+      const previous = await readFirestoreDocument(previousPath);
+      if (previous != null && previous.updateTime) {
+        await patchFirestoreDocument(previousPath, {
+          status: stringValue('revoked'),
+          updatedAt: stringValue(now),
+          revokedAt: stringValue(now),
+          revokedBy: stringValue('system'),
+          revokedReason: stringValue('تم تفعيل جهاز جديد للحساب.'),
+        }, previous.updateTime as string);
+      }
+    }
+    if (!current.updateTime) {
+      return jsonResponse({ message: 'تعذر تحديث ربط الجهاز الآن.' }, 409);
+    }
+    await patchFirestoreDocument(monitorPath, {
+      uid: stringValue(uid),
+      role: stringValue('paymentVerifier'),
+      walletNumber: stringValue(WALLET_NUMBER),
+      deviceId: stringValue(deviceId),
+      enabled: boolValue(true),
+      lastSeenAt: stringValue(now),
+      updatedAt: stringValue(now),
+    }, current.updateTime as string);
+  } else {
+    await writeFirestoreDocument(monitorPath, {
+      uid: stringValue(uid),
+      role: stringValue('paymentVerifier'),
+      walletNumber: stringValue(WALLET_NUMBER),
+      deviceId: stringValue(deviceId),
+      enabled: boolValue(true),
+      createdAt: stringValue(now),
+      lastSeenAt: stringValue(now),
+      updatedAt: stringValue(now),
+    });
+  }
+
+  if (device.updateTime) {
+    await patchFirestoreDocument(devicePath, {
+      lastSeenAt: stringValue(now),
+      activatedAt: stringValue(now),
+      updatedAt: stringValue(now),
+    }, device.updateTime as string);
+  }
+  return jsonResponse({ activated: true, access: 'approved' });
 }
 
 function boolFieldOrDefault(
@@ -1613,6 +1769,26 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const walletNumber = body.walletNumber;
     if (typeof deviceId !== 'string' || typeof walletNumber !== 'string') {
       return jsonResponse({ message: 'بيانات الجهاز غير مكتملة.' }, 400);
+    }
+
+    if (action === 'requestDevice' || action === 'checkDevice') {
+      const access = await resolveDeviceAccess(
+        auth.identity.uid,
+        deviceId,
+        walletNumber,
+        {
+          createPending: action === 'requestDevice',
+          deviceName: boundedText(body.deviceName, 160),
+          androidVersion: boundedText(body.androidVersion, 64),
+          appVersion: boundedText(body.appVersion, 64),
+        },
+      );
+      if (access instanceof Response) return access;
+      return jsonResponse(access);
+    }
+
+    if (action === 'activateDevice') {
+      return await activateDevice(auth.identity.uid, deviceId, walletNumber);
     }
 
     const deviceError = await ensureDevice(auth.identity.uid, deviceId, walletNumber);

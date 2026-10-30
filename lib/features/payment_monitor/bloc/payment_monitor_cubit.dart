@@ -15,6 +15,7 @@ enum PaymentMonitorAuthStatus {
   checking,
   signedOut,
   signingIn,
+  awaitingApproval,
   signedIn,
 }
 
@@ -80,6 +81,8 @@ class PaymentMonitorState extends Equatable {
     this.deviceId,
     this.pendingCount = 0,
     this.history = const <PaymentMonitorHistoryItem>[],
+    this.deviceAccess,
+    this.approvalMessage,
     this.errorMessage,
   });
 
@@ -90,6 +93,8 @@ class PaymentMonitorState extends Equatable {
   final String? deviceId;
   final int pendingCount;
   final List<PaymentMonitorHistoryItem> history;
+  final PaymentMonitorDeviceAccess? deviceAccess;
+  final String? approvalMessage;
   final String? errorMessage;
 
   bool get isSignedIn => authStatus == PaymentMonitorAuthStatus.signedIn;
@@ -167,6 +172,8 @@ class PaymentMonitorState extends Equatable {
     String? deviceId,
     int? pendingCount,
     List<PaymentMonitorHistoryItem>? history,
+    PaymentMonitorDeviceAccess? deviceAccess,
+    String? approvalMessage,
     String? errorMessage,
     bool clearError = false,
   }) =>
@@ -178,6 +185,8 @@ class PaymentMonitorState extends Equatable {
         deviceId: deviceId ?? this.deviceId,
         pendingCount: pendingCount ?? this.pendingCount,
         history: history ?? this.history,
+        deviceAccess: deviceAccess ?? this.deviceAccess,
+        approvalMessage: approvalMessage ?? this.approvalMessage,
         errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       );
 
@@ -190,6 +199,8 @@ class PaymentMonitorState extends Equatable {
         deviceId,
         pendingCount,
         history,
+        deviceAccess,
+        approvalMessage,
         errorMessage,
       ];
 }
@@ -211,7 +222,9 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
   final PaymentMonitorApi _api;
   final firebase_auth.FirebaseAuth _auth;
   Timer? _pollTimer;
+  Timer? _approvalTimer;
   bool _pollInFlight = false;
+  bool _approvalCheckInFlight = false;
   final Set<String> _inFlightIds = <String>{};
 
   Future<void> restoreSession() async {
@@ -262,6 +275,7 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
 
   Future<void> signOut() async {
     _stopPolling();
+    _stopApprovalPolling();
     await _deactivateMonitor();
     await _auth.signOut();
     emit(const PaymentMonitorState(
@@ -285,13 +299,46 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
     await _refreshRemoteHistory();
   }
 
+  Future<void> refreshDeviceAccess() => _checkApproval();
+
   Future<void> _activate({required bool clearQueue}) async {
     final String deviceId = await _deviceId();
-    if (clearQueue) await _sms.clearPendingMessages();
-    await _api.registerDevice(
+    final Map<String, String> info = await _sms.deviceInfo();
+    final PaymentMonitorDeviceAccessResponse access = await _api.requestDevice(
+      deviceId: deviceId,
+      walletNumber: AppConfig.instance.merchantWalletNumber,
+      deviceName: '${info['manufacturer'] ?? ''} ${info['model'] ?? ''}'.trim(),
+      androidVersion: info['androidVersion'] ?? '',
+      appVersion: const String.fromEnvironment(
+        'APP_VERSION',
+        defaultValue: '1.0.8+9',
+      ),
+    );
+    if (!access.isApproved) {
+      final List<PaymentMonitorHistoryItem> history = _loadHistory();
+      emit(PaymentMonitorState(
+        authStatus: PaymentMonitorAuthStatus.awaitingApproval,
+        deviceId: deviceId,
+        deviceAccess: access.access,
+        approvalMessage: access.message,
+        history: history,
+      ));
+      _startApprovalPolling();
+      return;
+    }
+    await _completeActivation(deviceId: deviceId, clearQueue: clearQueue);
+  }
+
+  Future<void> _completeActivation({
+    required String deviceId,
+    required bool clearQueue,
+  }) async {
+    _stopApprovalPolling();
+    await _api.activateDevice(
       deviceId: deviceId,
       walletNumber: AppConfig.instance.merchantWalletNumber,
     );
+    if (clearQueue) await _sms.clearPendingMessages();
     await _sms.activate(
       deviceId: deviceId,
       functionUrl: AppConfig.instance.paymentMonitorFunctionUrl,
@@ -322,11 +369,52 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
       permissionGranted: permissionGranted,
       isMonitoring: permissionGranted,
       deviceId: deviceId,
+      deviceAccess: PaymentMonitorDeviceAccess.approved,
       history: history,
     ));
     if (permissionGranted) {
       _startPolling();
       await _processPending();
+    }
+  }
+
+  void _startApprovalPolling() {
+    _approvalTimer ??= Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _checkApproval(),
+    );
+  }
+
+  void _stopApprovalPolling() {
+    _approvalTimer?.cancel();
+    _approvalTimer = null;
+  }
+
+  Future<void> _checkApproval() async {
+    if (_approvalCheckInFlight ||
+        state.authStatus != PaymentMonitorAuthStatus.awaitingApproval ||
+        state.deviceId == null) {
+      return;
+    }
+    _approvalCheckInFlight = true;
+    try {
+      final PaymentMonitorDeviceAccessResponse access = await _api.checkDevice(
+        deviceId: state.deviceId!,
+        walletNumber: AppConfig.instance.merchantWalletNumber,
+      );
+      if (access.isApproved) {
+        await _completeActivation(deviceId: state.deviceId!, clearQueue: false);
+        return;
+      }
+      emit(state.copyWith(
+        deviceAccess: access.access,
+        approvalMessage: access.message,
+      ));
+    } on Object catch (error) {
+      emit(state.copyWith(errorMessage: _messageFor(error)));
+      if (_isAccessError(error)) await _handleAccessRevoked(error);
+    } finally {
+      _approvalCheckInFlight = false;
     }
   }
 
@@ -388,6 +476,10 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
           changed = true;
         } on Object catch (error) {
           emit(state.copyWith(errorMessage: _messageFor(error)));
+          if (_isAccessError(error)) {
+            await _handleAccessRevoked(error);
+            break;
+          }
         } finally {
           _inFlightIds.remove(event.id);
         }
@@ -471,10 +563,27 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
       );
       await _writeHistory(merged);
       emit(state.copyWith(history: merged));
-    } on Object {
+    } on Object catch (error) {
       // Keep processing local events if the history action is unavailable or
       // temporarily offline.
+      if (_isAccessError(error)) await _handleAccessRevoked(error);
     }
+  }
+
+  bool _isAccessError(Object error) =>
+      error is PaymentMonitorApiException &&
+      (error.statusCode == 403 || error.statusCode == 409);
+
+  Future<void> _handleAccessRevoked(Object error) async {
+    _stopPolling();
+    await _deactivateMonitor();
+    emit(PaymentMonitorState(
+      authStatus: PaymentMonitorAuthStatus.awaitingApproval,
+      deviceId: state.deviceId,
+      deviceAccess: PaymentMonitorDeviceAccess.revoked,
+      approvalMessage: _messageFor(error),
+      history: state.history,
+    ));
   }
 
   Future<void> _writeHistory(
@@ -519,6 +628,7 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
   @override
   Future<void> close() {
     _stopPolling();
+    _stopApprovalPolling();
     return super.close();
   }
 }

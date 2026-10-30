@@ -1,6 +1,7 @@
 package com.albab.paymentmonitor
 
 import android.Manifest
+import android.os.Build
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -36,6 +37,13 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
+                    "deviceInfo" -> result.success(
+                        mapOf(
+                            "manufacturer" to Build.MANUFACTURER,
+                            "model" to Build.MODEL,
+                            "androidVersion" to Build.VERSION.RELEASE,
+                        ),
+                    )
                     "pendingSms" -> result.success(readPendingMessages())
                     "completedSms" -> result.success(readCompletedMessages())
                     "clearPendingSms" -> {
