@@ -2,7 +2,7 @@ name: albab_payment_monitor
 description: Albab payment-monitor companion app.
 publish_to: 'none'
 
-version: 1.0.7+8
+version: 1.0.8+9
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
