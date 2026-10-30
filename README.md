@@ -9,7 +9,7 @@ delivery application. It has one Flutter entry point only:
 lib/main.dart
 ```
 
-The Android application ID is `com.albab.paymentmonitor`, version `1.0.7+8`,
+The Android application ID is `com.albab.paymentmonitor`, version `1.0.8+9`,
 and it uses the existing Albab Firebase project plus the authenticated
 Supabase `payment-monitor` function. The monitor shares backend data and
 contracts with the delivery system, but it does not share the delivery app
