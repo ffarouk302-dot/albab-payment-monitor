@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1001142117670",
+    "firebase_url": "https://albab-delivery-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "albab-delivery",
+    "storage_bucket": "albab-delivery.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1001142117670:android:46bde201630fc93b39cde7",
+        "android_client_info": {
+          "package_name": "com.albab.paymentmonitor"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9FEwtKau06MVl30MZbVKs8DVpLnW7f7w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

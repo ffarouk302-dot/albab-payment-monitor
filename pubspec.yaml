@@ -1,0 +1,31 @@
+name: albab_payment_monitor
+description: Albab payment-monitor companion app.
+publish_to: 'none'
+
+version: 1.0.7+8
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_bloc: ^8.1.6
+  bloc: ^8.1.4
+  equatable: ^2.0.5
+  intl: ^0.20.3
+  uuid: ^4.5.1
+  shared_preferences: ^2.3.2
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  http: 1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo/
