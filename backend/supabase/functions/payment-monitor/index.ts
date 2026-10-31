@@ -1302,7 +1302,7 @@ async function monitorHistory(
           !linkedOrderId.includes('/')) {
         try {
           const linkedOrder = await readFirestoreDocument(
-            'orders/$linkedOrderId',
+            `orders/${linkedOrderId}`,
           );
           if (linkedOrder !== null) {
             const orderFieldsValue = documentFields(linkedOrder);
