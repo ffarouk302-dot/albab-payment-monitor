@@ -8,6 +8,7 @@ import '../domain/payment_sms.dart';
 
 enum PaymentMonitorDecision {
   matched,
+  refunded,
   review,
   duplicate,
   ignored,

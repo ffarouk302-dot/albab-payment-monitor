@@ -1283,11 +1283,44 @@ async function monitorHistory(
     'monitorUid',
     stringValue(monitorUid),
   );
-  return documents
-    .map((document) => {
+  const history = await Promise.all(documents.map(async (document) => {
       const fields = documentFields(document);
       const processedAt = stringField(fields, 'processedAt') ?? new Date(0).toISOString();
       const receivedAt = stringField(fields, 'receivedAt') ?? processedAt;
+      const storedDecision = stringField(fields, 'decision') ?? 'review';
+      const linkedOrderId = stringField(fields, 'orderId');
+      let decision = storedDecision;
+      let message = stringField(fields, 'message') ?? '';
+
+      // A review audit is immutable, but the order can later be cancelled and
+      // refunded from the delivery app. Reconcile that current state when the
+      // monitor history is read so a completed refund is not left in manual
+      // review forever.
+      if ((storedDecision === 'review' || storedDecision === 'duplicate') &&
+          linkedOrderId !== null &&
+          linkedOrderId.length > 0 &&
+          !linkedOrderId.includes('/')) {
+        try {
+          const linkedOrder = await readFirestoreDocument(
+            'orders/$linkedOrderId',
+          );
+          if (linkedOrder !== null) {
+            const orderFieldsValue = documentFields(linkedOrder);
+            const paymentStatus = stringField(
+              orderFieldsValue,
+              'paymentStatus',
+            );
+            const orderStatus = stringField(orderFieldsValue, 'status');
+            if (paymentStatus === 'refunded' || orderStatus === 'refunded') {
+              decision = 'refunded';
+              message = 'تم إلغاء الطلب واسترداد المبلغ إلى محفظة العميل.';
+            }
+          }
+        } catch {
+          // Keep the stored review result if the linked order cannot be read.
+        }
+      }
+
       return {
         event: {
           id: stringField(fields, 'id') ?? orderId(document),
@@ -1300,12 +1333,13 @@ async function monitorHistory(
           reference: stringField(fields, 'reference'),
           transactionAt: stringField(fields, 'transactionAt'),
         },
-        decision: stringField(fields, 'decision') ?? 'review',
-        message: stringField(fields, 'message') ?? '',
+        decision,
+        message,
         processedAt,
-        orderId: stringField(fields, 'orderId'),
+        orderId: linkedOrderId,
       };
-    })
+    }));
+  return history
     .sort((left, right) =>
       String(right.processedAt).localeCompare(String(left.processedAt)));
 }

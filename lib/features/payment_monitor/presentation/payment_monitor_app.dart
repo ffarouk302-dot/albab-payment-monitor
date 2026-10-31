@@ -312,7 +312,7 @@ class _MonitorLoginState extends State<_MonitorLogin> {
   }
 }
 
-enum _HistoryFilter { all, successful, manual, invalid }
+enum _HistoryFilter { all, successful, refunded, manual, invalid }
 
 class _MonitorDashboard extends StatefulWidget {
   const _MonitorDashboard();
@@ -366,6 +366,8 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
         _HistoryFilter.all => true,
         _HistoryFilter.successful =>
           item.decision == PaymentMonitorDecision.matched,
+        _HistoryFilter.refunded =>
+          item.decision == PaymentMonitorDecision.refunded,
         _HistoryFilter.manual =>
           item.decision == PaymentMonitorDecision.review ||
               item.decision == PaymentMonitorDecision.duplicate,
@@ -488,6 +490,12 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                       color: const Color(0xFF087443),
                     ),
                     _MetricCard(
+                      label: 'تم الاسترداد (${state.refundedCount})',
+                      value: Formatters.currency(state.refundedAmount),
+                      icon: Icons.currency_exchange_rounded,
+                      color: const Color(0xFF0F766E),
+                    ),
+                    _MetricCard(
                       label: 'مراجعة يدوية (${state.reviewCount})',
                       value: Formatters.currency(state.reviewAmount),
                       icon: Icons.fact_check_outlined,
@@ -518,6 +526,7 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                     children: <Widget>[
                       _filterChip('الكل', _HistoryFilter.all),
                       _filterChip('الناجحة', _HistoryFilter.successful),
+                      _filterChip('تم الاسترداد', _HistoryFilter.refunded),
                       _filterChip('مراجعة يدوية', _HistoryFilter.manual),
                       _filterChip('غير صالحة', _HistoryFilter.invalid),
                     ],
@@ -563,6 +572,12 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                     amount: Formatters.currency(state.successfulAmount),
                     items: _items(state, filter: _HistoryFilter.successful),
                     color: const Color(0xFF087443),
+                  ),
+                  _section(
+                    title: 'مبالغ تم استردادها',
+                    amount: Formatters.currency(state.refundedAmount),
+                    items: _items(state, filter: _HistoryFilter.refunded),
+                    color: const Color(0xFF0F766E),
                   ),
                   _section(
                     title: 'تحتاج تدخل يدوي',
@@ -818,6 +833,11 @@ class _HistoryTile extends StatelessWidget {
           color: const Color(0xFF087443),
           icon: Icons.check_circle_rounded,
           label: 'تم الاعتماد',
+        ),
+      PaymentMonitorDecision.refunded => (
+          color: const Color(0xFF0F766E),
+          icon: Icons.currency_exchange_rounded,
+          label: 'تم الاسترداد',
         ),
       PaymentMonitorDecision.review => (
           color: const Color(0xFFB54708),

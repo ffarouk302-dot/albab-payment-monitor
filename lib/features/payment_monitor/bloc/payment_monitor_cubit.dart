@@ -127,6 +127,11 @@ class PaymentMonitorState extends Equatable {
           item.decision == PaymentMonitorDecision.duplicate)
       .length;
 
+  int get refundedCount => history
+      .where((PaymentMonitorHistoryItem item) =>
+          item.decision == PaymentMonitorDecision.refunded)
+      .length;
+
   int get invalidCount => history
       .where((PaymentMonitorHistoryItem item) =>
           item.decision == PaymentMonitorDecision.ignored)
@@ -145,6 +150,11 @@ class PaymentMonitorState extends Equatable {
             item.decision == PaymentMonitorDecision.duplicate),
       );
 
+  double get refundedAmount => _sumAmount(
+        _uniqueTransactions.where((PaymentMonitorHistoryItem item) =>
+            item.decision == PaymentMonitorDecision.refunded),
+      );
+
   double get invalidAmount => _sumAmount(
         _uniqueTransactions.where((PaymentMonitorHistoryItem item) =>
             item.decision == PaymentMonitorDecision.ignored),
@@ -152,7 +162,8 @@ class PaymentMonitorState extends Equatable {
 
   static int _decisionPriority(PaymentMonitorDecision decision) =>
       switch (decision) {
-        PaymentMonitorDecision.matched => 3,
+        PaymentMonitorDecision.matched => 4,
+        PaymentMonitorDecision.refunded => 3,
         PaymentMonitorDecision.review || PaymentMonitorDecision.duplicate => 2,
         PaymentMonitorDecision.ignored => 1,
       };
