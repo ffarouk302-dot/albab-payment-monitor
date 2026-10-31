@@ -1275,6 +1275,124 @@ async function writeAudit(
   });
 }
 
+const WALLET_REFUND_MESSAGE =
+  'تم إلغاء شحن المحفظة واسترداد المبلغ إلى محفظة العميل.';
+const WALLET_REFUND_MATCH_WINDOW_MS = 15 * 60 * 1000;
+
+function isRefundedWalletTopUp(
+  document: Record<string, unknown> | null,
+): boolean {
+  return document != null &&
+    stringField(documentFields(document), 'status') === 'refunded';
+}
+
+async function refundedWalletTopUpRoot(
+  document: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  if (isRefundedWalletTopUp(document)) return document;
+
+  const parentRequestId = stringField(
+    documentFields(document),
+    'parentRequestId',
+  );
+  if (parentRequestId == null || parentRequestId.length === 0) return null;
+
+  const parent = await readFirestoreDocument(
+    `walletTopUpRequests/${parentRequestId}`,
+  );
+  return isRefundedWalletTopUp(parent) ? parent : null;
+}
+
+function walletRefundAmount(
+  document: Record<string, unknown>,
+): number | null {
+  const fields = documentFields(document);
+  return numberField(fields, 'refundedAmount') ??
+    numberField(fields, 'receivedAmount');
+}
+
+function walletRefundMatchesEvent(
+  document: Record<string, unknown>,
+  event: ParsedEvent,
+): boolean {
+  const fields = documentFields(document);
+  const refundAmount = walletRefundAmount(document);
+  if (event.amount == null || refundAmount == null ||
+      Math.abs(refundAmount - event.amount) > 0.01) {
+    return false;
+  }
+
+  const eventPhone = normalizePhone(event.senderPhone);
+  const payerPhone = normalizePhone(stringField(fields, 'payerPhone'));
+  if (eventPhone.length === 0 || payerPhone.length === 0 ||
+      eventPhone !== payerPhone) {
+    return false;
+  }
+
+  const eventMillis = parseTimestamp(event.transactionAt, true);
+  const receivedMillis = Number.isFinite(eventMillis)
+    ? eventMillis
+    : parseTimestamp(event.receivedAt, true);
+  const refundedMillis = parseTimestamp(
+    stringField(fields, 'refundedAt'),
+    true,
+  );
+  return Number.isFinite(receivedMillis) && Number.isFinite(refundedMillis) &&
+    Math.abs(refundedMillis - receivedMillis) <= WALLET_REFUND_MATCH_WINDOW_MS;
+}
+
+async function refundedWalletTopUpForEvent(
+  event: ParsedEvent,
+): Promise<Record<string, unknown> | null> {
+  if (event.reference != null && event.reference.length > 0) {
+    const requests = await findFirestoreDocuments(
+      'walletTopUpRequests',
+      'paymentTransactionId',
+      stringValue(event.reference),
+    );
+    for (const request of requests) {
+      const refunded = await refundedWalletTopUpRoot(request);
+      if (refunded != null) return refunded;
+    }
+
+    const transactions = await findFirestoreDocuments(
+      'walletTransactions',
+      'paymentTransactionId',
+      stringValue(event.reference),
+    );
+    for (const transaction of transactions) {
+      const transactionFields = documentFields(transaction);
+      const isTopUpRefund =
+        stringField(transactionFields, 'type') === 'topUpRefund' ||
+        stringField(transactionFields, 'sourceLabel') === 'استرداد شحن المحفظة';
+      const sourceId = stringField(transactionFields, 'sourceId');
+      if (!isTopUpRefund || sourceId == null || sourceId.length === 0) {
+        continue;
+      }
+      const request = await readFirestoreDocument(
+        `walletTopUpRequests/${sourceId}`,
+      );
+      const refunded = request == null
+        ? null
+        : await refundedWalletTopUpRoot(request);
+      if (refunded != null) return refunded;
+    }
+  }
+
+  // A continuation can be cancelled before its SMS is matched. In that case
+  // the event has no request reference, while the parent request is already
+  // refunded. Use all three stable SMS attributes and require one candidate
+  // only, so unrelated refunds are not relabeled automatically.
+  const refundedRequests = await findFirestoreDocuments(
+    'walletTopUpRequests',
+    'status',
+    stringValue('refunded'),
+  );
+  const candidates = refundedRequests.filter((request) =>
+    walletRefundMatchesEvent(request, event));
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 async function monitorHistory(
   monitorUid: string,
 ): Promise<Record<string, unknown>[]> {
@@ -1291,29 +1409,64 @@ async function monitorHistory(
       const linkedOrderId = stringField(fields, 'orderId');
       let decision = storedDecision;
       let message = stringField(fields, 'message') ?? '';
+      const historyEvent: ParsedEvent = {
+        id: stringField(fields, 'id') ?? orderId(document),
+        sender: stringField(fields, 'sender') ?? '',
+        receivedAt,
+        amount: numberField(fields, 'amount'),
+        senderPhone: stringField(fields, 'senderPhone'),
+        senderName: stringField(fields, 'senderName'),
+        walletNumber: stringField(fields, 'walletNumber'),
+        reference: stringField(fields, 'reference'),
+        transactionAt: stringField(fields, 'transactionAt'),
+      };
 
       // A review audit is immutable, but the order can later be cancelled and
       // refunded from the delivery app. Reconcile that current state when the
       // monitor history is read so a completed refund is not left in manual
-      // review forever.
-      if ((storedDecision === 'review' || storedDecision === 'duplicate') &&
-          linkedOrderId !== null &&
-          linkedOrderId.length > 0 &&
-          !linkedOrderId.includes('/')) {
+      // review forever. Wallet top-ups need their own lookup because their
+      // audit link is wallet-top-up:<id>, not an orders/<id> document.
+      if (storedDecision === 'review' || storedDecision === 'duplicate') {
         try {
-          const linkedOrder = await readFirestoreDocument(
-            `orders/${linkedOrderId}`,
-          );
-          if (linkedOrder !== null) {
-            const orderFieldsValue = documentFields(linkedOrder);
-            const paymentStatus = stringField(
-              orderFieldsValue,
-              'paymentStatus',
-            );
-            const orderStatus = stringField(orderFieldsValue, 'status');
-            if (paymentStatus === 'refunded' || orderStatus === 'refunded') {
+          if (linkedOrderId?.startsWith('wallet-top-up:')) {
+            const walletTopUpIdValue = linkedOrderId.slice('wallet-top-up:'.length);
+            const walletTopUp = walletTopUpIdValue.length === 0
+              ? null
+              : await readFirestoreDocument(
+                `walletTopUpRequests/${walletTopUpIdValue}`,
+              );
+            if (walletTopUp != null &&
+                await refundedWalletTopUpRoot(walletTopUp) != null) {
               decision = 'refunded';
-              message = 'تم إلغاء الطلب واسترداد المبلغ إلى محفظة العميل.';
+              message = WALLET_REFUND_MESSAGE;
+            }
+          } else if (linkedOrderId != null &&
+              linkedOrderId.length > 0 &&
+              !linkedOrderId.includes('/')) {
+            const linkedOrder = await readFirestoreDocument(
+              `orders/${linkedOrderId}`,
+            );
+            if (linkedOrder !== null) {
+              const orderFieldsValue = documentFields(linkedOrder);
+              const paymentStatus = stringField(
+                orderFieldsValue,
+                'paymentStatus',
+              );
+              const orderStatus = stringField(orderFieldsValue, 'status');
+              if (paymentStatus === 'refunded' || orderStatus === 'refunded') {
+                decision = 'refunded';
+                message = 'تم إلغاء الطلب واسترداد المبلغ إلى محفظة العميل.';
+              }
+            }
+          }
+
+          if (decision === storedDecision) {
+            const refundedWalletTopUp = await refundedWalletTopUpForEvent(
+              historyEvent,
+            );
+            if (refundedWalletTopUp != null) {
+              decision = 'refunded';
+              message = WALLET_REFUND_MESSAGE;
             }
           }
         } catch {
@@ -1322,17 +1475,7 @@ async function monitorHistory(
       }
 
       return {
-        event: {
-          id: stringField(fields, 'id') ?? orderId(document),
-          sender: stringField(fields, 'sender') ?? '',
-          receivedAt,
-          amount: numberField(fields, 'amount'),
-          senderPhone: stringField(fields, 'senderPhone'),
-          senderName: stringField(fields, 'senderName'),
-          walletNumber: stringField(fields, 'walletNumber'),
-          reference: stringField(fields, 'reference'),
-          transactionAt: stringField(fields, 'transactionAt'),
-        },
+        event: historyEvent,
         decision,
         message,
         processedAt,
@@ -1503,6 +1646,28 @@ async function processEvent(
         };
       }
     }
+  }
+
+  try {
+    const refundedWalletTopUp = await refundedWalletTopUpForEvent(event);
+    if (refundedWalletTopUp != null) {
+      const refundedWalletTopUpId = walletTopUpId(refundedWalletTopUp);
+      await writeAudit(
+        event,
+        'refunded',
+        WALLET_REFUND_MESSAGE,
+        monitorUid,
+        `wallet-top-up:${refundedWalletTopUpId}`,
+      );
+      return {
+        decision: 'refunded',
+        message: WALLET_REFUND_MESSAGE,
+        walletTopUpId: refundedWalletTopUpId,
+        reference: event.reference,
+      };
+    }
+  } catch {
+    // Continue with the regular matching flow if refund reconciliation fails.
   }
 
   const referenceTime = eventTime(event, now);
