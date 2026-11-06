@@ -7,6 +7,10 @@
   "integration_settings": {
     "codex": {
       "script": "ps",
+      "raw_options": "--events false",
+      "parsed_options": {
+        "events": "false"
+      },
       "invoke_separator": "-"
     }
   },
