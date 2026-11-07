@@ -201,7 +201,7 @@ export async function readFirestoreDocument(
   return await response.json() as Record<string, unknown>;
 }
 
-type FirestoreFields = Record<string, Record<string, unknown>>;
+export type FirestoreFields = Record<string, Record<string, unknown>>;
 
 function firestoreDocumentName(documentPath: string): string {
   return `projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${documentPath}`;
@@ -261,6 +261,54 @@ export async function patchFirestoreDocument(
   );
   if (!response.ok) {
     throw new Error(`Firestore conditional update failed (${response.status}).`);
+  }
+}
+
+export type FirestoreCommitWrite =
+  | { mode: 'create'; documentPath: string; fields: FirestoreFields }
+  | {
+    mode: 'update';
+    documentPath: string;
+    fields: FirestoreFields;
+    updateTime: string;
+  };
+
+/** Applies immutable creates and version-checked updates atomically. */
+export async function commitFirestoreWrites(
+  writes: FirestoreCommitWrite[],
+): Promise<void> {
+  if (writes.length === 0) return;
+  const accessToken = await getGoogleAccessToken();
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:commit`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        writes: writes.map((write) => write.mode === 'create'
+          ? {
+            update: {
+              name: firestoreDocumentName(write.documentPath),
+              fields: write.fields,
+            },
+            currentDocument: { exists: false },
+          }
+          : {
+            update: {
+              name: firestoreDocumentName(write.documentPath),
+              fields: write.fields,
+            },
+            updateMask: { fieldPaths: Object.keys(write.fields) },
+            currentDocument: { updateTime: write.updateTime },
+          }),
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Firestore atomic write failed (${response.status}).`);
   }
 }
 

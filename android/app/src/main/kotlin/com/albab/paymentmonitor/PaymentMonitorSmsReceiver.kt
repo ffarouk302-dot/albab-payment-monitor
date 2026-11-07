@@ -33,9 +33,7 @@ class PaymentMonitorSmsReceiver : BroadcastReceiver() {
         val id = "$receivedAt-${sender.hashCode()}-${body.hashCode()}"
         synchronized(QUEUE_LOCK) {
             val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            val current = JSONArray(
-                preferences.getString(QUEUE_KEY, "[]") ?: "[]",
-            )
+            val current = pending(context)
             for (index in 0 until current.length()) {
                 if (current.optJSONObject(index)?.optString("id") == id) return
             }
@@ -72,6 +70,8 @@ class PaymentMonitorSmsReceiver : BroadcastReceiver() {
         val QUEUE_LOCK = Any()
         private const val ALLOWED_SENDER = "VF-Cash"
         private const val MAX_QUEUE_SIZE = 100
+        private const val MAX_PENDING_AGE_MS = 24L * 60 * 60 * 1000
+        private const val MAX_FUTURE_CLOCK_SKEW_MS = 5L * 60 * 1000
 
         fun isActive(context: Context): Boolean = context.getSharedPreferences(
             PREFERENCES,
@@ -109,12 +109,33 @@ class PaymentMonitorSmsReceiver : BroadcastReceiver() {
             context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean(ACTIVE_KEY, false)
+                // Raw message bodies are only needed while processing. A
+                // signed-out, deactivated, or revoked monitor must not retain
+                // either pending or completed message payloads on device.
+                .remove(QUEUE_KEY)
+                .remove(COMPLETED_KEY)
                 .apply()
         }
 
         fun pending(context: Context): JSONArray = synchronized(QUEUE_LOCK) {
             val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            JSONArray(preferences.getString(QUEUE_KEY, "[]") ?: "[]")
+            val current = JSONArray(preferences.getString(QUEUE_KEY, "[]") ?: "[]")
+            val unexpired = JSONArray()
+            val now = System.currentTimeMillis()
+            var removed = false
+            for (index in 0 until current.length()) {
+                val item = current.optJSONObject(index)
+                val receivedAt = item?.optLong("receivedAt", 0L) ?: 0L
+                val withinClockSkew = receivedAt <= now + MAX_FUTURE_CLOCK_SKEW_MS
+                val notExpired = receivedAt >= now - MAX_PENDING_AGE_MS
+                if (item != null && receivedAt > 0L && withinClockSkew && notExpired) {
+                    unexpired.put(item)
+                } else {
+                    removed = true
+                }
+            }
+            if (removed) preferences.edit().putString(QUEUE_KEY, unexpired.toString()).apply()
+            unexpired
         }
 
         fun acknowledge(context: Context, ids: Set<String>) {
@@ -184,6 +205,13 @@ class PaymentMonitorSmsReceiver : BroadcastReceiver() {
                 .edit()
                 .remove(QUEUE_KEY)
                 .remove(COMPLETED_KEY)
+                .apply()
+        }
+
+        fun clearPending(context: Context) = synchronized(QUEUE_LOCK) {
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .remove(QUEUE_KEY)
                 .apply()
         }
     }

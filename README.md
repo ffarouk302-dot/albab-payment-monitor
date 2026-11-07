@@ -51,3 +51,9 @@ aapt dump badging build/app/outputs/flutter-apk/app-release.apk
 ```
 
 The output must contain `com.albab.paymentmonitor` and `مراقب الدفع`.
+# Local synthetic validation
+
+The payment monitor is evidence-only. Local validation uses synthetic IDs with
+the `rt-` prefix and must not contact production Supabase, Firebase, payment
+gateways, OTP destinations, or real SMS content. Run the monitor tests from
+the repository root and retain only redacted outputs.

@@ -39,6 +39,12 @@ void main() {
           reference: 'ref-1',
         ),
         item(
+          id: 'duplicate-event-retry',
+          decision: PaymentMonitorDecision.duplicate,
+          amount: 5,
+          reference: 'ref-1',
+        ),
+        item(
           id: 'review-event',
           decision: PaymentMonitorDecision.review,
           amount: 10,
@@ -54,7 +60,7 @@ void main() {
     );
 
     expect(state.successCount, 1);
-    expect(state.reviewCount, 2);
+    expect(state.reviewCount, 1);
     expect(state.invalidCount, 1);
     expect(state.successfulAmount, 5);
     expect(state.reviewAmount, 10);

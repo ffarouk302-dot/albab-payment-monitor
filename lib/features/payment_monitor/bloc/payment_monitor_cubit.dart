@@ -116,23 +116,23 @@ class PaymentMonitorState extends Equatable {
     return byReference.values.toList(growable: false);
   }
 
-  int get successCount => history
+  int get successCount => _uniqueTransactions
       .where((PaymentMonitorHistoryItem item) =>
           item.decision == PaymentMonitorDecision.matched)
       .length;
 
-  int get reviewCount => history
+  int get reviewCount => _uniqueTransactions
       .where((PaymentMonitorHistoryItem item) =>
           item.decision == PaymentMonitorDecision.review ||
           item.decision == PaymentMonitorDecision.duplicate)
       .length;
 
-  int get refundedCount => history
+  int get refundedCount => _uniqueTransactions
       .where((PaymentMonitorHistoryItem item) =>
           item.decision == PaymentMonitorDecision.refunded)
       .length;
 
-  int get invalidCount => history
+  int get invalidCount => _uniqueTransactions
       .where((PaymentMonitorHistoryItem item) =>
           item.decision == PaymentMonitorDecision.ignored)
       .length;
@@ -435,6 +435,12 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
     } on Object {
       // Signing out must still complete if the native bridge is unavailable.
     }
+    try {
+      await _sms.clearPendingMessages();
+    } on Object {
+      // Do not leave sign-out blocked if the receiver is unavailable.
+    }
+    await _storage.clearPaymentMonitorSensitiveData();
   }
 
   void _startPolling() {

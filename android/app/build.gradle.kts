@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("com.google.gms.google-services")
@@ -22,9 +25,31 @@ android {
         versionName = flutter.versionName
     }
 
+    val signingProperties = Properties()
+    val signingPropertiesFile = rootProject.file("key.properties")
+    if (signingPropertiesFile.exists()) {
+        FileInputStream(signingPropertiesFile).use(signingProperties::load)
+    }
+
+    signingConfigs {
+        create("release") {
+            val storeFilePath = signingProperties.getProperty("storeFile")
+            if (!storeFilePath.isNullOrBlank()) {
+                storeFile = file(storeFilePath)
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile == null || releaseSigning.keyAlias.isNullOrBlank()) {
+                throw GradleException("Release signing is required. Configure android/key.properties; debug signing is forbidden for release builds.")
+            }
+            signingConfig = releaseSigning
         }
     }
 }

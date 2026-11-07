@@ -1,0 +1,5 @@
+# Copy this file to android/key.properties and fill it locally. Never commit it.
+storeFile=C:\secure\albab-payment-monitor-upload.jks
+storePassword=REPLACE_LOCALLY
+keyAlias=REPLACE_LOCALLY
+keyPassword=REPLACE_LOCALLY

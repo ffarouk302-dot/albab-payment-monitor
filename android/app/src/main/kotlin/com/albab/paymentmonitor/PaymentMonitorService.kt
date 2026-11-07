@@ -77,22 +77,37 @@ class PaymentMonitorService : Service() {
     }
 
     private fun drainQueueSafely() {
-        if (!PaymentMonitorSmsReceiver.isActive(this)) return
-        val currentUser = FirebaseAuth.getInstance().currentUser ?: return
+        if (!PaymentMonitorSmsReceiver.isActive(this)) {
+            PaymentMonitorSmsReceiver.clearPending(this)
+            return
+        }
+        val currentUser = FirebaseAuth.getInstance().currentUser ?: run {
+            PaymentMonitorSmsReceiver.clearPending(this)
+            return
+        }
         val preferences = getSharedPreferences(
             PaymentMonitorSmsReceiver.PREFERENCES,
             Context.MODE_PRIVATE,
         )
         val deviceId = preferences.getString(PaymentMonitorSmsReceiver.DEVICE_ID_KEY, null)
-            ?: return
+            ?: run {
+                PaymentMonitorSmsReceiver.clearPending(this)
+                return
+            }
         val functionUrl = preferences.getString(
             PaymentMonitorSmsReceiver.FUNCTION_URL_KEY,
             null,
-        ) ?: return
+        ) ?: run {
+            PaymentMonitorSmsReceiver.clearPending(this)
+            return
+        }
         val walletNumber = preferences.getString(
             PaymentMonitorSmsReceiver.WALLET_KEY,
             null,
-        ) ?: return
+        ) ?: run {
+            PaymentMonitorSmsReceiver.clearPending(this)
+            return
+        }
 
         var token = Tasks.await(currentUser.getIdToken(false)).token ?: return
         val queue = PaymentMonitorSmsReceiver.pending(this)
@@ -107,7 +122,12 @@ class PaymentMonitorService : Service() {
 
             var response = postEvent(functionUrl, token, deviceId, walletNumber, event)
             if (response.statusCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
-                token = Tasks.await(currentUser.getIdToken(true)).token ?: break
+                val refreshedToken = Tasks.await(currentUser.getIdToken(true)).token
+                if (refreshedToken == null) {
+                    PaymentMonitorSmsReceiver.clearPending(this)
+                    break
+                }
+                token = refreshedToken
                 response = postEvent(functionUrl, token, deviceId, walletNumber, event)
             }
             if (response.statusCode in 200..299) {
@@ -115,6 +135,12 @@ class PaymentMonitorService : Service() {
                     PaymentMonitorSmsReceiver.recordCompleted(this, event, body)
                 }
                 acknowledged.add(item.optString("id"))
+            } else if (response.statusCode == HttpURLConnection.HTTP_FORBIDDEN ||
+                response.statusCode == HttpURLConnection.HTTP_CONFLICT) {
+                // Device denial, revocation, or deactivation is terminal for
+                // the queued raw message. Do not retain it for a later retry.
+                PaymentMonitorSmsReceiver.clearPending(this)
+                break
             }
         }
         PaymentMonitorSmsReceiver.acknowledge(this, acknowledged)

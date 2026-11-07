@@ -9,8 +9,7 @@ class LocalStorage {
   final SharedPreferences _prefs;
 
   static const String kPaymentMonitorDeviceId = 'payment_monitor_device_id';
-  static const String kPaymentMonitorActivated =
-      'payment_monitor_activated';
+  static const String kPaymentMonitorActivated = 'payment_monitor_activated';
   static const String kPaymentMonitorHistory = 'payment_monitor_history';
 
   static Future<LocalStorage> create() async =>
@@ -47,4 +46,12 @@ class LocalStorage {
     List<Map<String, dynamic>> value,
   ) =>
       _prefs.setString(key, jsonEncode(value));
+
+  /// Removes locally persisted monitoring history that can contain payment
+  /// message metadata. The stable device identifier is intentionally retained
+  /// so device approval can be checked again after the next authenticated sign-in.
+  Future<void> clearPaymentMonitorSensitiveData() async {
+    await _prefs.remove(kPaymentMonitorHistory);
+    await _prefs.remove(kPaymentMonitorActivated);
+  }
 }

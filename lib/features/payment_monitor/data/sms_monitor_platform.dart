@@ -43,11 +43,15 @@ class CompletedPaymentSms {
 /// queue. Dart consumes and acknowledges items after the server responds, so a
 /// temporary network failure does not lose a payment notification.
 class SmsMonitorPlatform {
-  SmsMonitorPlatform({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel(_channelName);
+  SmsMonitorPlatform({MethodChannel? channel, DateTime Function()? now})
+      : _channel = channel ?? const MethodChannel(_channelName),
+        _now = now ?? DateTime.now;
 
   static const String _channelName = 'albab/payment_monitor_sms';
+  static const Duration pendingMessageRetention = Duration(hours: 24);
+  static const Duration maximumFutureClockSkew = Duration(minutes: 5);
   final MethodChannel _channel;
+  final DateTime Function() _now;
 
   Future<bool> hasReceiveSmsPermission() async {
     final bool? granted = await _channel.invokeMethod<bool>('hasSmsPermission');
@@ -87,23 +91,40 @@ class SmsMonitorPlatform {
     final List<dynamic> raw =
         await _channel.invokeMethod<List<dynamic>>('pendingSms') ??
             const <dynamic>[];
-    return raw
-        .whereType<Map<dynamic, dynamic>>()
-        .map((Map<dynamic, dynamic> item) {
-          final Map<String, dynamic> json = item.map(
-            (dynamic key, dynamic value) => MapEntry(key.toString(), value),
-          );
-          return PaymentSmsParser.parse(
-            id: json['id'] as String? ?? '',
-            sender: json['sender'] as String? ?? '',
-            body: json['body'] as String? ?? '',
-            receivedAt: DateTime.fromMillisecondsSinceEpoch(
-              (json['receivedAt'] as num?)?.toInt() ?? 0,
-            ),
-          );
-        })
-        .whereType<PaymentSmsEvent>()
-        .toList(growable: false);
+    final List<PaymentSmsEvent> events = <PaymentSmsEvent>[];
+    final List<String> discardedIds = <String>[];
+    final DateTime now = _now();
+    for (final dynamic value in raw) {
+      if (value is! Map<dynamic, dynamic>) continue;
+      final Map<String, dynamic> json = value.map(
+        (dynamic key, dynamic item) => MapEntry(key.toString(), item),
+      );
+      final String id = json['id'] as String? ?? '';
+      final DateTime receivedAt = DateTime.fromMillisecondsSinceEpoch(
+        (json['receivedAt'] as num?)?.toInt() ?? 0,
+      );
+      final Duration age = now.difference(receivedAt);
+      if (id.isEmpty ||
+          receivedAt.millisecondsSinceEpoch <= 0 ||
+          age > pendingMessageRetention ||
+          age < -maximumFutureClockSkew) {
+        if (id.isNotEmpty) discardedIds.add(id);
+        continue;
+      }
+      final PaymentSmsEvent? event = PaymentSmsParser.parse(
+        id: id,
+        sender: json['sender'] as String? ?? '',
+        body: json['body'] as String? ?? '',
+        receivedAt: receivedAt,
+      );
+      if (event == null) {
+        discardedIds.add(id);
+      } else {
+        events.add(event);
+      }
+    }
+    if (discardedIds.isNotEmpty) await acknowledge(discardedIds);
+    return events;
   }
 
   Future<List<CompletedPaymentSms>> completedMessages() async {
