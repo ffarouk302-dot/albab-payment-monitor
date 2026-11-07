@@ -26,6 +26,9 @@ class PaymentMonitorHistoryItem extends Equatable {
     required this.message,
     required this.processedAt,
     this.orderId,
+    this.evidenceId,
+    this.linkedOperationId,
+    this.linkedAttemptId,
   });
 
   final PaymentSmsEvent event;
@@ -33,6 +36,9 @@ class PaymentMonitorHistoryItem extends Equatable {
   final String message;
   final DateTime processedAt;
   final String? orderId;
+  final String? evidenceId;
+  final String? linkedOperationId;
+  final String? linkedAttemptId;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'event': event.toJson(),
@@ -40,6 +46,9 @@ class PaymentMonitorHistoryItem extends Equatable {
         'message': message,
         'processedAt': processedAt.toUtc().toIso8601String(),
         'orderId': orderId,
+        'evidenceId': evidenceId,
+        'linkedOperationId': linkedOperationId,
+        'linkedAttemptId': linkedAttemptId,
       };
 
   factory PaymentMonitorHistoryItem.fromJson(Map<String, dynamic> json) {
@@ -59,6 +68,9 @@ class PaymentMonitorHistoryItem extends Equatable {
       processedAt: DateTime.tryParse(json['processedAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       orderId: json['orderId'] as String?,
+      evidenceId: json['evidenceId'] as String?,
+      linkedOperationId: json['linkedOperationId'] as String?,
+      linkedAttemptId: json['linkedAttemptId'] as String?,
     );
   }
 
@@ -69,6 +81,9 @@ class PaymentMonitorHistoryItem extends Equatable {
         message,
         processedAt,
         orderId,
+        evidenceId,
+        linkedOperationId,
+        linkedAttemptId,
       ];
 }
 
@@ -478,6 +493,9 @@ class PaymentMonitorCubit extends Cubit<PaymentMonitorState> {
             message: response.message,
             processedAt: DateTime.now(),
             orderId: response.orderId,
+            evidenceId: response.evidenceId,
+            linkedOperationId: response.linkedOperationId,
+            linkedAttemptId: response.linkedAttemptId,
           );
           await _saveHistory(item);
           await _sms.acknowledge(<String>[event.id]);

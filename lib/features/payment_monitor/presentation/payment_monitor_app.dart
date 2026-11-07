@@ -484,13 +484,13 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                       color: const Color(0xFF102A43),
                     ),
                     _MetricCard(
-                      label: 'ناجحة (${state.successCount})',
+                      label: 'اعتماد قديم (${state.successCount})',
                       value: Formatters.currency(state.successfulAmount),
                       icon: Icons.verified_rounded,
                       color: const Color(0xFF087443),
                     ),
                     _MetricCard(
-                      label: 'تم الاسترداد (${state.refundedCount})',
+                      label: 'استرداد قديم (${state.refundedCount})',
                       value: Formatters.currency(state.refundedAmount),
                       icon: Icons.currency_exchange_rounded,
                       color: const Color(0xFF0F766E),
@@ -525,8 +525,8 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                   child: Row(
                     children: <Widget>[
                       _filterChip('الكل', _HistoryFilter.all),
-                      _filterChip('الناجحة', _HistoryFilter.successful),
-                      _filterChip('تم الاسترداد', _HistoryFilter.refunded),
+                      _filterChip('اعتماد قديم', _HistoryFilter.successful),
+                      _filterChip('استرداد قديم', _HistoryFilter.refunded),
                       _filterChip('مراجعة يدوية', _HistoryFilter.manual),
                       _filterChip('غير صالحة', _HistoryFilter.invalid),
                     ],
@@ -568,13 +568,13 @@ class _MonitorDashboardState extends State<_MonitorDashboard> {
                   )
                 else ...<Widget>[
                   _section(
-                    title: 'تحويلات ناجحة',
+                    title: 'تحويلات باعتماد قديم',
                     amount: Formatters.currency(state.successfulAmount),
                     items: _items(state, filter: _HistoryFilter.successful),
                     color: const Color(0xFF087443),
                   ),
                   _section(
-                    title: 'مبالغ تم استردادها',
+                    title: 'مبالغ باسترداد قديم',
                     amount: Formatters.currency(state.refundedAmount),
                     items: _items(state, filter: _HistoryFilter.refunded),
                     color: const Color(0xFF0F766E),
@@ -830,14 +830,14 @@ class _HistoryTile extends StatelessWidget {
     final ({Color color, IconData icon, String label}) style =
         switch (item.decision) {
       PaymentMonitorDecision.matched => (
-          color: const Color(0xFF087443),
-          icon: Icons.check_circle_rounded,
-          label: 'تم الاعتماد',
+          color: const Color(0xFFB54708),
+          icon: Icons.fact_check_outlined,
+          label: 'مراجعة يدوية (قديم)',
         ),
       PaymentMonitorDecision.refunded => (
-          color: const Color(0xFF0F766E),
-          icon: Icons.currency_exchange_rounded,
-          label: 'تم الاسترداد',
+          color: const Color(0xFFB54708),
+          icon: Icons.fact_check_outlined,
+          label: 'مراجعة يدوية (قديم)',
         ),
       PaymentMonitorDecision.review => (
           color: const Color(0xFFB54708),
@@ -884,6 +884,16 @@ class _HistoryTile extends StatelessWidget {
               '$eventTimeLabel: ${_safeMonitorDateTime(eventTime)}',
               style: const TextStyle(fontSize: 12, color: Color(0xFF627D98)),
             ),
+            if (item.evidenceId != null)
+              Text(
+                'معرّف الدليل: ${item.evidenceId}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF627D98)),
+              ),
+            if (item.linkedOperationId != null)
+              Text(
+                'مرتبط بعملية مراجعة ${item.linkedOperationId}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF0F766E)),
+              ),
             if (item.decision != PaymentMonitorDecision.matched &&
                 item.message.isNotEmpty)
               Text(

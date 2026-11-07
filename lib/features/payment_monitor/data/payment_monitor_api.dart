@@ -7,7 +7,12 @@ import '../../../core/config/app_config.dart';
 import '../domain/payment_sms.dart';
 
 enum PaymentMonitorDecision {
+  /// Legacy local-history value. The server no longer grants approval.
+  @Deprecated('Server evidence is review-only.')
   matched,
+
+  /// Legacy local-history value. Refunds are recorded by the delivery admin.
+  @Deprecated('Refund decisions belong to the delivery secure operation.')
   refunded,
   review,
   duplicate,
@@ -53,12 +58,18 @@ class PaymentMonitorResponse {
     required this.message,
     this.orderId,
     this.reference,
+    this.evidenceId,
+    this.linkedOperationId,
+    this.linkedAttemptId,
   });
 
   final PaymentMonitorDecision decision;
   final String message;
   final String? orderId;
   final String? reference;
+  final String? evidenceId;
+  final String? linkedOperationId;
+  final String? linkedAttemptId;
 }
 
 class PaymentMonitorApiException implements Exception {
@@ -143,6 +154,9 @@ class PaymentMonitorApi {
       message: body['message'] as String? ?? 'تم إرسال التحويل للمراجعة.',
       orderId: body['orderId'] as String?,
       reference: body['reference'] as String?,
+      evidenceId: body['evidenceId'] as String?,
+      linkedOperationId: body['linkedOperationId'] as String?,
+      linkedAttemptId: body['linkedAttemptId'] as String?,
     );
   }
 

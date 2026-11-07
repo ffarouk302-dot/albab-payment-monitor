@@ -508,9 +508,12 @@ async function monitorHistory(
     };
     return {
       event,
+      evidenceId: stringField(fields, 'evidenceId') ?? stringField(fields, 'id'),
       decision: stringField(fields, 'decision') ?? 'review',
       message: stringField(fields, 'message') ?? manualReviewMessage(),
       processedAt,
+      linkedOperationId: stringField(fields, 'linkedOperationId'),
+      linkedAttemptId: stringField(fields, 'linkedAttemptId'),
       duplicate: false,
     };
   }).sort((left, right) =>
@@ -533,6 +536,7 @@ async function processEvent(
   }
 
   const message = manualReviewMessage();
+  const evidenceId = await evidenceDocumentId(monitorUid, deviceId, event.id);
   const saved = await submitReviewEvidence(
     event,
     monitorUid,
@@ -544,6 +548,9 @@ async function processEvent(
       decision: 'duplicate',
       message: 'الرقم المرجعي مسجل من قبل، وأي اعتماد له يتطلب مراجعة يدوية.',
       reference: event.reference,
+      evidenceId,
+      linkedOperationId: null,
+      linkedAttemptId: null,
       duplicate: true,
     };
   }
@@ -553,13 +560,28 @@ async function processEvent(
       decision: stringField(fields, 'decision') ?? 'review',
       message: stringField(fields, 'message') ?? message,
       reference: stringField(fields, 'reference') ?? event.reference,
+      evidenceId: stringField(fields, 'evidenceId') ?? evidenceId,
+      linkedOperationId: stringField(fields, 'linkedOperationId'),
+      linkedAttemptId: stringField(fields, 'linkedAttemptId'),
       duplicate: true,
     };
   }
+  const createdFields = saved.document == null
+    ? null
+    : documentFields(saved.document);
   return {
     decision: 'review',
     message,
     reference: event.reference,
+    evidenceId: createdFields == null
+      ? evidenceId
+      : stringField(createdFields, 'evidenceId') ?? evidenceId,
+    linkedOperationId: createdFields == null
+      ? null
+      : stringField(createdFields, 'linkedOperationId'),
+    linkedAttemptId: createdFields == null
+      ? null
+      : stringField(createdFields, 'linkedAttemptId'),
     duplicate: false,
   };
 }
