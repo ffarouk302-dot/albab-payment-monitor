@@ -372,15 +372,21 @@ export function redactedEvidenceFields(
     sender: stringValue(event.sender.trim().toLowerCase().slice(0, 48)),
     receivedAt: stringValue(event.receivedAt),
     amount: event.amount == null ? nullValue() : numberValue(event.amount),
-    senderPhoneLast4: redactPhone(event.senderPhone) == null
+    senderPhone: event.senderPhone == null
       ? nullValue()
-      : stringValue(redactPhone(event.senderPhone)!),
-    walletNumberLast4: redactPhone(event.walletNumber) == null
+      : stringValue(normalizePhone(event.senderPhone)),
+    senderName: event.senderName == null
       ? nullValue()
-      : stringValue(redactPhone(event.walletNumber)!),
+      : stringValue(event.senderName.trim().slice(0, 120)),
+    walletNumber: event.walletNumber == null
+      ? nullValue()
+      : stringValue(normalizePhone(event.walletNumber)),
     reference: event.reference == null
       ? nullValue()
       : stringValue(event.reference.slice(0, 128)),
+    normalizedReference: event.reference == null
+      ? nullValue()
+      : stringValue(normalizeDigits(event.reference.trim()).replaceAll(/\s+/g, ' ').toUpperCase()),
     transactionAt: event.transactionAt == null
       ? nullValue()
       : stringValue(event.transactionAt),
@@ -432,7 +438,9 @@ export async function submitReviewEvidence(
   const documentPath = `paymentMonitorEvents/${id}`;
   const existing = await store.read(documentPath);
   if (existing != null) return { outcome: 'duplicate_event', document: existing };
-  const normalizedReference = event.reference?.trim() ?? '';
+  const normalizedReference = event.reference == null
+    ? ''
+    : normalizeDigits(event.reference.trim()).replaceAll(/\s+/g, ' ').toUpperCase();
   const referenceLockId = normalizedReference.length === 0
     ? null
     : await evidenceDocumentId(monitorUid, '', normalizedReference);
@@ -493,16 +501,16 @@ async function monitorHistory(
     const processedAt = stringField(fields, 'processedAt') ??
       new Date(0).toISOString();
     const receivedAt = stringField(fields, 'receivedAt') ?? processedAt;
-    const senderPhoneLast4 = stringField(fields, 'senderPhoneLast4');
-    const walletNumberLast4 = stringField(fields, 'walletNumberLast4');
+    const senderPhone = stringField(fields, 'senderPhone');
+    const walletNumber = stringField(fields, 'walletNumber');
     const event: ParsedEvent = {
       id: stringField(fields, 'id') ?? '',
       sender: stringField(fields, 'sender') ?? '',
       receivedAt,
       amount: numberField(fields, 'amount'),
-      senderPhone: senderPhoneLast4,
-      senderName: null,
-      walletNumber: walletNumberLast4,
+      senderPhone,
+      senderName: stringField(fields, 'senderName'),
+      walletNumber,
       reference: stringField(fields, 'reference'),
       transactionAt: stringField(fields, 'transactionAt'),
     };
@@ -524,6 +532,7 @@ async function processEvent(
   event: ParsedEvent,
   monitorUid: string,
   deviceId: string,
+  request: Request,
 ): Promise<Record<string, unknown>> {
   const walletMatches = normalizePhone(event.walletNumber) === WALLET_NUMBER;
   if (event.sender.toLowerCase().replaceAll(' ', '') !== 'vf-cash' ||
@@ -556,34 +565,75 @@ async function processEvent(
   }
   if (saved.outcome === 'duplicate_event') {
     const fields = documentFields(saved.document);
+    const savedEvidenceId = stringField(fields, 'evidenceId') ?? evidenceId;
+    const reconciliation = await reconcileWithSecureOperations(request, savedEvidenceId);
+    const refreshed = await readFirestoreDocument(`paymentMonitorEvents/${savedEvidenceId}`);
+    const refreshedFields = documentFields(refreshed);
     return {
       decision: stringField(fields, 'decision') ?? 'review',
-      message: stringField(fields, 'message') ?? message,
+      message: reconciliation?.linked === true
+        ? 'تم ربط دليل التحويل بالعملية للمراجعة.'
+        : stringField(fields, 'message') ?? message,
       reference: stringField(fields, 'reference') ?? event.reference,
-      evidenceId: stringField(fields, 'evidenceId') ?? evidenceId,
-      linkedOperationId: stringField(fields, 'linkedOperationId'),
-      linkedAttemptId: stringField(fields, 'linkedAttemptId'),
+      evidenceId: savedEvidenceId,
+      linkedOperationId: stringField(refreshedFields, 'linkedOperationId'),
+      linkedAttemptId: stringField(refreshedFields, 'linkedAttemptId'),
       duplicate: true,
     };
   }
   const createdFields = saved.document == null
     ? null
     : documentFields(saved.document);
+  const savedEvidenceId = createdFields == null
+    ? evidenceId
+    : stringField(createdFields, 'evidenceId') ?? evidenceId;
+  const reconciliation = await reconcileWithSecureOperations(request, savedEvidenceId);
+  const refreshed = await readFirestoreDocument(`paymentMonitorEvents/${savedEvidenceId}`);
+  const refreshedFields = documentFields(refreshed);
   return {
     decision: 'review',
-    message,
+    message: reconciliation?.linked === true
+      ? 'تم ربط دليل التحويل بالعملية للمراجعة.'
+      : message,
     reference: event.reference,
-    evidenceId: createdFields == null
-      ? evidenceId
-      : stringField(createdFields, 'evidenceId') ?? evidenceId,
-    linkedOperationId: createdFields == null
-      ? null
-      : stringField(createdFields, 'linkedOperationId'),
-    linkedAttemptId: createdFields == null
-      ? null
-      : stringField(createdFields, 'linkedAttemptId'),
+    evidenceId: savedEvidenceId,
+    linkedOperationId: stringField(refreshedFields, 'linkedOperationId'),
+    linkedAttemptId: stringField(refreshedFields, 'linkedAttemptId'),
     duplicate: false,
   };
+}
+
+async function reconcileWithSecureOperations(
+  request: Request,
+  evidenceId: string,
+): Promise<Record<string, unknown> | null> {
+  const authorization = request.headers.get('authorization');
+  const apiKey = request.headers.get('apikey');
+  if (!authorization || !apiKey) return null;
+  const endpoint = new URL(request.url);
+  endpoint.pathname = '/functions/v1/secure-operations';
+  endpoint.search = '';
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization,
+        apikey: apiKey,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'reconcilePaymentMonitorEvidence',
+        evidenceId,
+      }),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body != null && typeof body === 'object'
+      ? body as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 if (import.meta.main) {
@@ -644,7 +694,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (event == null) {
       return jsonResponse({ message: 'بيانات رسالة التحويل غير صالحة.' }, 400);
     }
-    const result = await processEvent(event, identity.uid, deviceId);
+    const result = await processEvent(event, identity.uid, deviceId, request);
     return jsonResponse(result);
   } catch (error) {
     console.error('Payment monitor error:', error);

@@ -875,6 +875,8 @@ class _HistoryTile extends StatelessWidget {
             Text(
               [
                 style.label,
+                if (item.event.senderName?.isNotEmpty == true)
+                  'اسم المحوّل ${item.event.senderName}',
                 if (item.event.senderPhone != null) item.event.senderPhone!,
                 if (item.event.reference != null)
                   'مرجع ${item.event.reference}',
